@@ -2,10 +2,10 @@ from email import message_from_string
 import json
 import logging
 import random
-from StringIO import StringIO
+from io import StringIO
 from threading import Thread
 import time
-import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from flask import Flask, request, Response, g
 from httpbin.helpers import get_dict, status_code
@@ -141,7 +141,7 @@ def _log_t(transport, data, status=None):
 
 def _log(ipaddr, port, data, status=None, ua=""):
     try:
-        topline = data.split('\r\n')[0]
+        topline = data.split('\r\n')[0] if type(data) is str else data.decode('utf-8').split('\r\n')[0]
         return "{ipaddr} {port} \"{topline}\" {status} \"{ua}\"".format(
             ipaddr=ipaddr, port=port, topline=topline, ua=ua, status=status or "-")
     except Exception:
@@ -168,7 +168,7 @@ class EmptyStringTerminateImmediatelyServer(protocol.Protocol):
         logger.info(_log_t(self.transport, data))
 
     def connectionMade(self):
-        self.transport.write('')
+        self.transport.write('ffff'.encode('utf-8'))
         self.transport.loseConnection()
 
 
@@ -183,7 +183,7 @@ class EmptyStringTerminateOnReceiveServer(protocol.Protocol):
 
     def dataReceived(self, data):
         logger.info(_log_t(self.transport, data))
-        self.transport.write('')
+        self.transport.write(''.encode('utf-8'))
         self.transport.loseConnection()
 
 
@@ -200,7 +200,7 @@ class MalformedStringTerminateImmediatelyServer(protocol.Protocol):
         logger.info(_log_t(self.transport, data))
 
     def connectionMade(self):
-        self.transport.write('foo bar')
+        self.transport.write('foo bar'.encode('utf-8'))
         self.transport.loseConnection()
 
 
@@ -215,7 +215,7 @@ class MalformedStringTerminateOnReceiveServer(protocol.Protocol):
 
     def dataReceived(self, data):
         logger.info(_log_t(self.transport, data))
-        self.transport.write('foo bar')
+        self.transport.write('foo bar'.encode('utf-8'))
         self.transport.loseConnection()
 
 
@@ -228,12 +228,13 @@ class MalformedStringTerminateOnReceiveFactory(protocol.Factory):
 empty_response = ('HTTP/1.1 204 No Content\r\n'
                   'Server: {hdr}\r\n\r\n'.format(hdr=SERVER_HEADER))
 
+
 class FiveSecondByteResponseServer(protocol.Protocol):
 
     PORT = 6
 
     def _send_byte(self, byte):
-        self.transport.write(byte)
+        self.transport.write(byte.encode('utf-8'))
 
     def dataReceived(self, data):
         try:
@@ -257,7 +258,7 @@ class ThirtySecondByteResponseServer(protocol.Protocol):
     PORT = 7
 
     def _send_byte(self, byte):
-        self.transport.write(byte)
+        self.transport.write(byte.encode('utf-8'))
 
     def dataReceived(self, data):
         try:
@@ -290,7 +291,7 @@ class SendDataPastContentLengthServer(protocol.Protocol):
                              'Content-Length: 3\r\n'
                              'Connection: keep-alive\r\n'
                              '\r\n{body}'.format(server=SERVER_HEADER,
-                                                 body='a'*1024*1024))
+                                                 body='a'*1024*1024).encode('utf-8'))
         self.transport.loseConnection()
 
 class SendDataPastContentLengthFactory(protocol.Factory):
@@ -309,7 +310,7 @@ class DropRandomRequestsServer(protocol.Protocol):
     PORT = 13
 
     def dataReceived(self, data):
-        body = data.split('\r\n')
+        body = data.decode('utf-8').split('\r\n')
         try:
             method, url, http_vsn = body[0].split(' ')
         except Exception:
@@ -317,8 +318,8 @@ class DropRandomRequestsServer(protocol.Protocol):
             logger.info(_log_t(self.transport, data))
             self.transport.loseConnection()
 
-        o = urlparse.urlparse(url)
-        query = urlparse.parse_qs(o.query)
+        o = urlparse(url)
+        query = parse_qs(o.query)
         if 'failrate' in query:
             failrate = query['failrate'].pop()
         else:
@@ -326,7 +327,7 @@ class DropRandomRequestsServer(protocol.Protocol):
         if random.random() >= float(failrate):
             logger.info(_log_t(self.transport, data, status=200))
             self.transport.write(
-                success_response('application/json', '{"success": true}'))
+                success_response(b'application/json', '{"success": true}').encode('utf-8'))
         else:
             logger.info(_log_t(self.transport, data))
         self.transport.loseConnection()
@@ -338,10 +339,10 @@ class DropRandomRequestsFactory(protocol.Factory):
 
 
 def write_incomplete_response(transport, content_type, body):
-    transport.write('Content-Type: {ctype}\r\n'.format(ctype=content_type))
+    transport.write('Content-Type: {ctype}\r\n'.format(ctype=content_type).encode('utf-8'))
     transport.write('Content-Length: {length}\r\n'.format(
-        length=len(body)+2000))
-    transport.write('\r\n{body}'.format(body=body))
+        length=len(body)+2000).encode('utf-8'))
+    transport.write('\r\n{body}'.format(body=body).encode('utf-8'))
     transport.loseConnection()
 
 INCOMPLETE_JSON = '{"message": "the json body is incomplete.", "key": {"nested_message": "blah blah blah'
@@ -354,7 +355,7 @@ class IncompleteResponseServer(protocol.Protocol):
     def dataReceived(self, data):
         accept_header_value = get_header('Accept', data)
         accept_cls = parse_accept_header(accept_header_value)
-        self.transport.write('HTTP/1.1 200 OK\r\n')
+        self.transport.write(b'HTTP/1.1 200 OK\r\n')
         if 'text/html' == accept_cls.best:
             write_incomplete_response(self.transport, 'text/html',
                                       INCOMPLETE_HTML)
@@ -558,7 +559,7 @@ def toolong():
     return r
 
 def _get_port_from_url(url):
-    urlo = urlparse.urlparse(url)
+    urlo = urlparse(url)
     try:
         host, port = urlo.netloc.split(':')
         return port
